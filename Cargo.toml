@@ -1,0 +1,29 @@
+# Local simulation harness for the polyleverage program.
+#
+# Standalone single-package workspace (like the protocol crates) so it
+# builds without parent-workspace context. NOT published — this is a
+# test/benchmark harness. It loads the prebuilt SBF artifact from
+# polyleverage/target/deploy/polyleverage.so into an in-process SVM
+# (litesvm) and drives it end-to-end with a simulated CRE/TEE attestor.
+[workspace]
+exclude = ["polyleverage"]
+
+[package]
+name = "polyleverage-sim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Local simulation + benchmark harness for the polyleverage Solana program"
+
+[dependencies]
+litesvm = "0.6"
+solana-sdk = "2"
+borsh = "1.5"
+bytemuck = "1"
+spl-token = { version = "7", features = ["no-entrypoint"] }
+spl-associated-token-account = { version = "6", features = ["no-entrypoint"] }
+# The program under test, as a host-buildable lib (no SBF entrypoint).
+# The harness builds instructions from the program's own instruction /
+# seed / attestation types so it cannot drift from the wire format.
+polyleverage = { path = "polyleverage", features = ["no-entrypoint"] }
