@@ -4,7 +4,7 @@
 //! must fail. Clearing the pause restores normal operation.
 
 use polyleverage::state::SIDE_LONG;
-use polyleverage_sim::scenario::{RANGE_MAX_FP, RANGE_MIN_FP, SCENARIO_EXPIRY_SLOT};
+use polyleverage_sim::scenario::{SCENARIO_PRICE_FP, SCENARIO_EXPIRY_SLOT};
 use polyleverage_sim::Scenario;
 
 #[test]
@@ -18,8 +18,7 @@ fn emergency_pause_blocks_then_resumes() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     );
@@ -35,8 +34,7 @@ fn emergency_pause_blocks_then_resumes() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     );

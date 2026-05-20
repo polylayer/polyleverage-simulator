@@ -17,11 +17,10 @@ use crate::driver::{Harness, InstrumentParams};
 /// that nothing expires mid-test.
 pub const SCENARIO_EXPIRY_SLOT: u64 = 1_000_000;
 
-/// Overlapping price range both scenario intents post over. Entry price
-/// settles at the overlap midpoint (50). These are normalized prices in
-/// the program's `(0, 1)` fixed-point.
-pub const RANGE_MIN_FP: u64 = 40;
-pub const RANGE_MAX_FP: u64 = 60;
+/// Limit price both scenario intents post at. When a long and a short post
+/// the same price they cross and the PMLC entry settles there. Normalized
+/// price in the program's `(0, 1)` fixed-point.
+pub const SCENARIO_PRICE_FP: u64 = 50;
 pub const ENTRY_FP: u64 = 50;
 
 /// Default per-trader deposit floor. The actual deposit scales up with
@@ -109,18 +108,17 @@ impl Scenario {
         trader
     }
 
-    /// Post an overlapping long + short over the default scenario range
-    /// and match them into a live PMLC. Returns the PMLC PDA.
+    /// Post a crossing long + short at the default scenario price and match
+    /// them into a live PMLC. Returns the PMLC PDA.
     pub fn open_pmlc(&mut self) -> Pubkey {
-        self.open_pmlc_at(RANGE_MIN_FP, RANGE_MAX_FP)
+        self.open_pmlc_at(SCENARIO_PRICE_FP)
     }
 
-    /// Post a long + short over `[min_price_fp, max_price_fp]` and match
-    /// them into a live PMLC. The entry price settles at the overlap
-    /// midpoint; pass `min == max` for an exact entry. Used by the
-    /// multi-asset tests to open positions at a normalized Pyth price.
-    /// Panics if any step fails.
-    pub fn open_pmlc_at(&mut self, min_price_fp: u64, max_price_fp: u64) -> Pubkey {
+    /// Post a long and a short both at `price_fp` and match them into a live
+    /// PMLC. Same-price intents cross and the entry settles at `price_fp`.
+    /// Used by the multi-asset tests to open positions at a normalized Pyth
+    /// price. Panics if any step fails.
+    pub fn open_pmlc_at(&mut self, price_fp: u64) -> Pubkey {
         let long_id = self.h.book_next_intent_id(&self.book);
         self.h
             .post_intent(
@@ -129,8 +127,7 @@ impl Scenario {
                 &self.book,
                 &self.mint,
                 SIDE_LONG,
-                min_price_fp,
-                max_price_fp,
+                price_fp,
                 1,
                 SCENARIO_EXPIRY_SLOT,
             )
@@ -144,8 +141,7 @@ impl Scenario {
                 &self.book,
                 &self.mint,
                 SIDE_SHORT,
-                min_price_fp,
-                max_price_fp,
+                price_fp,
                 1,
                 SCENARIO_EXPIRY_SLOT,
             )

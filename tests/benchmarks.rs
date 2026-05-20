@@ -9,7 +9,7 @@
 
 use polyleverage::state::{SIDE_LONG, SIDE_SHORT};
 use polyleverage_sim::driver::TxResult;
-use polyleverage_sim::scenario::{RANGE_MAX_FP, RANGE_MIN_FP, SCENARIO_EXPIRY_SLOT};
+use polyleverage_sim::scenario::{SCENARIO_PRICE_FP, SCENARIO_EXPIRY_SLOT};
 use polyleverage_sim::{Attestor, Harness, InstrumentParams, Scenario};
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::{Keypair, Signer};
@@ -48,8 +48,7 @@ fn compute_unit_benchmarks() {
             &s.book,
             &s.mint,
             SIDE_LONG,
-            RANGE_MIN_FP,
-            RANGE_MAX_FP,
+            SCENARIO_PRICE_FP,
             1,
             SCENARIO_EXPIRY_SLOT,
         )),
@@ -63,8 +62,7 @@ fn compute_unit_benchmarks() {
             &s.book,
             &s.mint,
             SIDE_SHORT,
-            RANGE_MIN_FP,
-            RANGE_MAX_FP,
+            SCENARIO_PRICE_FP,
             1,
             SCENARIO_EXPIRY_SLOT,
         )),
@@ -195,7 +193,7 @@ fn measure_scaling(capacity: u32) -> (Option<u64>, Option<u64>) {
     // trader's first post, so this one is not the measurement.
     let long_id = h.book_next_intent_id(&book);
     h.post_intent(
-        &a, &instrument, &book, &mint, SIDE_LONG, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        &a, &instrument, &book, &mint, SIDE_LONG, SCENARIO_PRICE_FP, 1,
         SCENARIO_EXPIRY_SLOT,
     )
     .expect("seed long");
@@ -203,7 +201,7 @@ fn measure_scaling(capacity: u32) -> (Option<u64>, Option<u64>) {
     // A's second post is measured: A now has a seat, so prune-on-post
     // runs its O(capacity) scan over the node pool.
     let post_ix = h.post_intent_ix(
-        &a, &instrument, &book, &mint, SIDE_LONG, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        &a, &instrument, &book, &mint, SIDE_LONG, SCENARIO_PRICE_FP, 1,
         SCENARIO_EXPIRY_SLOT,
     );
     let post_cu = h
@@ -214,7 +212,7 @@ fn measure_scaling(capacity: u32) -> (Option<u64>, Option<u64>) {
     // A short to match against.
     let short_id = h.book_next_intent_id(&book);
     h.post_intent(
-        &b, &instrument, &book, &mint, SIDE_SHORT, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        &b, &instrument, &book, &mint, SIDE_SHORT, SCENARIO_PRICE_FP, 1,
         SCENARIO_EXPIRY_SLOT,
     )
     .expect("seed short");

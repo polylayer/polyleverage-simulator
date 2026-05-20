@@ -12,7 +12,7 @@
 //! repeat with the same ids fails.
 
 use polyleverage::state::{PMLC_STATUS_LIVE, SIDE_LONG, SIDE_SHORT};
-use polyleverage_sim::scenario::{ENTRY_FP, RANGE_MAX_FP, RANGE_MIN_FP, SCENARIO_EXPIRY_SLOT};
+use polyleverage_sim::scenario::{ENTRY_FP, SCENARIO_PRICE_FP, SCENARIO_EXPIRY_SLOT};
 use polyleverage_sim::Scenario;
 use solana_sdk::signature::Signer;
 
@@ -32,8 +32,7 @@ fn substitute_with_settle_hands_off_position() {
         &s.book,
         &s.mint,
         SIDE_SHORT,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     )
@@ -46,8 +45,7 @@ fn substitute_with_settle_hands_off_position() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     )

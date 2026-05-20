@@ -1,8 +1,8 @@
 //! CreateInstrument then PostIntent long + short then MatchPair.
 //!
-//! Posts an overlapping long and short, matches them, and verifies the
-//! resulting PMLC. The rejection case: two intents whose price ranges
-//! do not overlap must not match.
+//! Posts a crossing long and short, matches them, and verifies the
+//! resulting PMLC. The rejection case: a long bidding below the short's
+//! ask does not cross and must not match.
 
 use polyleverage::state::{PMLC_STATUS_LIVE, SIDE_LONG, SIDE_SHORT};
 use polyleverage_sim::scenario::{ENTRY_FP, SCENARIO_EXPIRY_SLOT};
@@ -26,14 +26,16 @@ fn post_match_produces_live_pmlc() {
     );
     assert_eq!(
         pmlc.entry_price_fp, ENTRY_FP,
-        "entry settles at the overlap midpoint"
+        "entry settles at the crossing midpoint"
     );
 }
 
 #[test]
-fn match_rejects_non_overlapping_ranges() {
+fn match_rejects_non_crossing_prices() {
     let mut s = Scenario::new();
 
+    // Long bids 10, short asks 80 — the long will not pay the ask, so the
+    // prices do not cross.
     let long_id = s.h.book_next_intent_id(&s.book);
     s.h.post_intent(
         &s.long,
@@ -42,7 +44,6 @@ fn match_rejects_non_overlapping_ranges() {
         &s.mint,
         SIDE_LONG,
         10,
-        20,
         1,
         SCENARIO_EXPIRY_SLOT,
     )
@@ -56,7 +57,6 @@ fn match_rejects_non_overlapping_ranges() {
         &s.mint,
         SIDE_SHORT,
         80,
-        90,
         1,
         SCENARIO_EXPIRY_SLOT,
     )
@@ -73,8 +73,5 @@ fn match_rejects_non_overlapping_ranges() {
         &s.short.pubkey(),
         &s.long.pubkey(),
     );
-    assert!(
-        res.is_err(),
-        "intents with disjoint price ranges must not match"
-    );
+    assert!(res.is_err(), "non-crossing prices must not match");
 }

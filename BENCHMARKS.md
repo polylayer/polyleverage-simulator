@@ -4,7 +4,7 @@ Per-instruction compute units, measured in-process with litesvm
 (`tests/benchmarks.rs`). Regenerate with:
 
 ```sh
-cargo test --test benchmarks -- --nocapture
+cargo test --test benchmarks -- --nocapture --test-threads=1
 ```
 
 The benchmark asserts every instruction stays under the 200,000 CU
@@ -18,14 +18,14 @@ zero-fee schedule.
 | Instruction                | Compute units | Notes |
 |----------------------------|--------------:|-------|
 | ClosePmlc                  |         1,356 | Lamport sweep + data zero. |
-| PostIntent (long)          |         5,071 | First post on an empty book. |
-| PostIntent (short)         |         6,774 | Second post; seat/tree insert. |
-| Novate                     |         9,633 | Two margin updates + owner swap. |
+| PostIntent (long)          |         5,048 | First post on an empty book. |
+| PostIntent (short)         |         6,751 | Second post; seat/tree insert. |
+| Novate                     |        11,133 | Two margin updates + owner swap. |
 | Resolve (+attestation)     |        11,360 | Includes the Ed25519 precompile verify. |
+| Liquidate (+attestation)   |        14,802 | Includes the Ed25519 precompile verify. |
 | Withdraw                   |        15,408 | Includes the SPL token transfer CPI. |
 | Deposit                    |        15,553 | Includes the SPL token transfer CPI. |
-| Liquidate (+attestation)   |        16,302 | Includes the Ed25519 precompile verify. |
-| MatchPair                  |        37,623 | Hot path — see below. |
+| MatchPair                  |        37,557 | Hot path — see below. |
 
 ## Hot path
 
@@ -45,36 +45,41 @@ limit; the protocol has substantial CU headroom.
 
 ## Scaling with book depth
 
-`MatchPair`, `CancelIntent`, and `PostIntent` resolve and prune
-intents by scanning the book's node pool, so their cost grows with the
-book's provisioned node capacity (not its live fill — the scan visits
-every slot). `compute_unit_scaling` measures this directly: it grows a
-book to a target capacity and meters `PostIntent` and `MatchPair`.
+The book is two price-sorted trees. Matching *discovery* —
+`MatchBestAvailable` finding the best crossing pair — is `O(log n)`:
+the best bid and best ask are each the leftmost node of their tree.
+
+What still scales linearly is intent resolution *by id*: `MatchPair`
+calls `find_intent_by_id` twice, and `PostIntent`'s opportunistic
+prune walks the node pool. Both scan every slot, so their cost grows
+with the book's provisioned node capacity (not its live fill).
+`compute_unit_scaling` measures this: it grows a book to a target
+capacity and meters `PostIntent` and `MatchPair`.
 
 | Book capacity | PostIntent CU | MatchPair CU |
 |--------------:|--------------:|-------------:|
-|            16 |         5,679 |       36,336 |
-|            64 |         6,308 |       37,020 |
-|           256 |        10,304 |       39,324 |
-|         1,024 |        21,788 |       53,040 |
-|         4,096 |        58,724 |       88,404 |
-|         8,192 |       113,472 |      139,056 |
+|            16 |         5,580 |       33,271 |
+|            64 |         6,209 |       39,955 |
+|           256 |        11,705 |       42,259 |
+|         1,024 |        20,189 |       48,475 |
+|         4,096 |        58,625 |       91,339 |
+|         8,192 |       111,873 |      150,991 |
 
 Both grow linearly at roughly 13 CU per node. `MatchPair` fits
-`~36,000 CU + ~12.6 CU x capacity`.
+`~33,000 CU + ~13 CU x capacity`.
 
 The practical ceilings that follow from the linear fit:
 
-- A book of up to **~13,000 node slots** keeps `MatchPair` within the
+- A book of up to **~12,000 node slots** keeps `MatchPair` within the
   200,000 CU default per-instruction limit.
 - Raising the transaction's compute budget to the 1,400,000 CU maximum
   (a one-instruction `ComputeBudget` request) extends that to
-  **~105,000 slots**, which is also near the 10 MiB account-size cap
+  **~95,000 slots**, which is also near the 10 MiB account-size cap
   (~109,000 nodes at 96 bytes each). The two ceilings roughly coincide.
 
 For context, the protocol shards by instrument: every
 (asset, leverage, bucket) is its own book account. A single instrument
-would need on the order of 13,000 simultaneously resting intents
+would need on the order of 12,000 simultaneously resting intents
 before matching even needs a raised compute budget. That is far above
 realistic depth for a per-bucket market.
 
@@ -85,7 +90,7 @@ each). Provisioning a deep book is a one-time sequence of expand
 transactions.
 
 If a single instrument ever needs a book beyond these bounds, the
-`O(n)` scans can be removed by having callers pass the intent's node
-index (validated against its id) instead of an id the program must
-search for, which flattens `MatchPair` to its ~36k base regardless of
-depth.
+`O(n)` id lookup can be removed by having callers pass the intent's
+node index (validated against its id) instead of an id the program
+must search for, which flattens `MatchPair` to its ~33k base
+regardless of depth.

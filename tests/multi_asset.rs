@@ -121,7 +121,7 @@ fn normalized_pyth_price_settles_full_lifecycle() {
     let mut s = Scenario::with_params(params);
 
     // Open a position at exactly the normalized Pyth price.
-    let pmlc_pda = s.open_pmlc_at(entry_fp, entry_fp);
+    let pmlc_pda = s.open_pmlc_at(entry_fp);
     assert_eq!(
         s.h.load_pmlc(&pmlc_pda).entry_price_fp,
         entry_fp,

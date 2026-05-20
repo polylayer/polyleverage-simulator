@@ -5,7 +5,7 @@
 //! economically invalid pairs.
 
 use polyleverage::state::SIDE_LONG;
-use polyleverage_sim::scenario::{RANGE_MAX_FP, RANGE_MIN_FP, SCENARIO_EXPIRY_SLOT};
+use polyleverage_sim::scenario::{SCENARIO_PRICE_FP, SCENARIO_EXPIRY_SLOT};
 use polyleverage_sim::Scenario;
 use solana_sdk::signature::Signer;
 
@@ -18,8 +18,7 @@ fn post_intent_rejects_zero_contracts() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         0,
         SCENARIO_EXPIRY_SLOT,
     );
@@ -35,8 +34,7 @@ fn post_intent_rejects_invalid_side() {
         &s.book,
         &s.mint,
         7, // neither SIDE_LONG (0) nor SIDE_SHORT (1)
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     );
@@ -53,8 +51,7 @@ fn post_intent_rejects_expired_expiration_slot() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         0,
     );
@@ -62,21 +59,20 @@ fn post_intent_rejects_expired_expiration_slot() {
 }
 
 #[test]
-fn post_intent_rejects_inverted_price_range() {
+fn post_intent_rejects_zero_price() {
     let mut s = Scenario::new();
-    // min > max.
+    // A limit price of 0 is outside the valid (0, 1) band.
     let res = s.h.post_intent(
         &s.long,
         &s.instrument,
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MAX_FP,
-        RANGE_MIN_FP,
+        0,
         1,
         SCENARIO_EXPIRY_SLOT,
     );
-    assert!(res.is_err(), "an inverted price range must be rejected");
+    assert!(res.is_err(), "a zero limit price must be rejected");
 }
 
 #[test]
@@ -91,8 +87,7 @@ fn post_intent_rejects_insufficient_collateral() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     );
@@ -114,8 +109,7 @@ fn match_rejects_non_opposite_sides() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     )
@@ -128,8 +122,7 @@ fn match_rejects_non_opposite_sides() {
         &s.book,
         &s.mint,
         SIDE_LONG,
-        RANGE_MIN_FP,
-        RANGE_MAX_FP,
+        SCENARIO_PRICE_FP,
         1,
         SCENARIO_EXPIRY_SLOT,
     )

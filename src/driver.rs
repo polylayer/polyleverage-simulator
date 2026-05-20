@@ -548,15 +548,13 @@ impl Harness {
         book: &Pubkey,
         mint: &Pubkey,
         side: u8,
-        min_price_fp: u64,
-        max_price_fp: u64,
+        price_fp: u64,
         contracts: u16,
         expiration_slot: u64,
     ) -> Instruction {
         let args = PostIntentArgs {
             side,
-            min_price_fp,
-            max_price_fp,
+            price_fp,
             contracts,
             expiration_slot,
             reentry_enabled: 0,
@@ -585,8 +583,7 @@ impl Harness {
         book: &Pubkey,
         mint: &Pubkey,
         side: u8,
-        min_price_fp: u64,
-        max_price_fp: u64,
+        price_fp: u64,
         contracts: u16,
         expiration_slot: u64,
     ) -> TxResult {
@@ -596,8 +593,7 @@ impl Harness {
             book,
             mint,
             side,
-            min_price_fp,
-            max_price_fp,
+            price_fp,
             contracts,
             expiration_slot,
         );
