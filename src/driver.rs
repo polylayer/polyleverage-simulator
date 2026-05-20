@@ -11,6 +11,7 @@ use litesvm::LiteSVM;
 use solana_sdk::{
     account::Account,
     clock::Clock,
+    compute_budget::ComputeBudgetInstruction,
     instruction::{AccountMeta, Instruction},
     program_option::COption,
     program_pack::Pack,
@@ -24,9 +25,10 @@ use spl_token::state::{Account as TokenAccount, AccountState, Mint};
 
 use crate::attestor::Attestor;
 use polyleverage::instruction::{
-    CancelTimelockArgs, CreateInstrumentArgs, DepositArgs, ExecuteTimelockArgs, FeeTier,
-    InitFeeScheduleArgs, InitProgramConfigArgs, InstructionTag, LiquidateArgs, MatchPairArgs,
-    NovateArgs, PostIntentArgs, ProposeSetAttestationSignerArgs, ResolveArgs, WithdrawArgs,
+    CancelTimelockArgs, CreateInstrumentArgs, DepositArgs, ExecuteTimelockArgs,
+    ExpandIntentBookArgs, FeeTier, InitFeeScheduleArgs, InitProgramConfigArgs, InstructionTag,
+    LiquidateArgs, MatchPairArgs, NovateArgs, PostIntentArgs, ProposeSetAttestationSignerArgs,
+    ResolveArgs, WithdrawArgs,
 };
 use polyleverage::seeds::{
     SEED_BOOK, SEED_CONFIG, SEED_FEE_SCHEDULE, SEED_INSTRUMENT, SEED_MARGIN, SEED_MARKET_NONCE,
@@ -490,6 +492,90 @@ impl Harness {
         header.next_intent_id
     }
 
+    /// The book's current node-pool capacity.
+    pub fn book_capacity(&self, book: &Pubkey) -> u32 {
+        let acct = self.account(book).expect("book account exists");
+        let header: &IntentBookHeader =
+            bytemuck::from_bytes(&acct.data[..INTENT_BOOK_HEADER_LEN]);
+        header.capacity
+    }
+
+    /// `ExpandIntentBook` — grow the book by `additional_nodes` slots.
+    /// Solana caps account growth at ~10 KiB per transaction, so a
+    /// caller wanting a deep book loops this with chunks of ~100 nodes.
+    pub fn expand_intent_book(
+        &mut self,
+        instrument: &Pubkey,
+        book: &Pubkey,
+        additional_nodes: u32,
+    ) -> TxResult {
+        let ix = self.ix(
+            InstructionTag::ExpandIntentBook,
+            &ExpandIntentBookArgs { additional_nodes },
+            vec![
+                AccountMeta::new(self.payer.pubkey(), true),
+                AccountMeta::new_readonly(self.config_pda(), false),
+                AccountMeta::new_readonly(*instrument, false),
+                AccountMeta::new(*book, false),
+                AccountMeta::new_readonly(system_program::ID, false),
+            ],
+        );
+        self.send(&[ix], &[])
+    }
+
+    /// `PostIntent` (no inline match). Returns the transaction result.
+    #[allow(clippy::too_many_arguments)]
+    /// Submit a transaction with an explicit compute-unit limit (a
+    /// `ComputeBudget` instruction prepended), so a measurement can run
+    /// past the default 200k per-instruction ceiling up to 1.4M.
+    pub fn send_metered(
+        &mut self,
+        ixs: &[Instruction],
+        extra_signers: &[&Keypair],
+        cu_limit: u32,
+    ) -> TxResult {
+        let mut all = vec![ComputeBudgetInstruction::set_compute_unit_limit(cu_limit)];
+        all.extend_from_slice(ixs);
+        self.send(&all, extra_signers)
+    }
+
+    /// Build a `PostIntent` instruction (no inline match).
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_intent_ix(
+        &self,
+        owner: &Keypair,
+        instrument: &Pubkey,
+        book: &Pubkey,
+        mint: &Pubkey,
+        side: u8,
+        min_price_fp: u64,
+        max_price_fp: u64,
+        contracts: u16,
+        expiration_slot: u64,
+    ) -> Instruction {
+        let args = PostIntentArgs {
+            side,
+            min_price_fp,
+            max_price_fp,
+            contracts,
+            expiration_slot,
+            reentry_enabled: 0,
+            try_match: 0,
+            max_pairs: 0,
+        };
+        self.ix(
+            InstructionTag::PostIntent,
+            &args,
+            vec![
+                AccountMeta::new_readonly(owner.pubkey(), true),
+                AccountMeta::new_readonly(self.config_pda(), false),
+                AccountMeta::new_readonly(*instrument, false),
+                AccountMeta::new(*book, false),
+                AccountMeta::new(self.margin_pda(&owner.pubkey(), mint), false),
+            ],
+        )
+    }
+
     /// `PostIntent` (no inline match). Returns the transaction result.
     #[allow(clippy::too_many_arguments)]
     pub fn post_intent(
@@ -504,26 +590,16 @@ impl Harness {
         contracts: u16,
         expiration_slot: u64,
     ) -> TxResult {
-        let args = PostIntentArgs {
+        let ix = self.post_intent_ix(
+            owner,
+            instrument,
+            book,
+            mint,
             side,
             min_price_fp,
             max_price_fp,
             contracts,
             expiration_slot,
-            reentry_enabled: 0,
-            try_match: 0,
-            max_pairs: 0,
-        };
-        let ix = self.ix(
-            InstructionTag::PostIntent,
-            &args,
-            vec![
-                AccountMeta::new_readonly(owner.pubkey(), true),
-                AccountMeta::new_readonly(self.config_pda(), false),
-                AccountMeta::new_readonly(*instrument, false),
-                AccountMeta::new(*book, false),
-                AccountMeta::new(self.margin_pda(&owner.pubkey(), mint), false),
-            ],
         );
         self.send(&[ix], &[owner])
     }
@@ -538,12 +614,10 @@ impl Harness {
         self.pda(&[SEED_TREASURY, mint.as_ref()]).0
     }
 
-    /// `MatchPair` — match an explicit `(long_id, short_id)` pair into a new
-    /// PMLC. `taker`/`maker` are the volume-account owners (taker = the side
-    /// posted later). Returns `(tx result, PMLC PDA)`.
+    /// Build a `MatchPair` instruction. Returns `(instruction, PMLC PDA)`.
     #[allow(clippy::too_many_arguments)]
-    pub fn match_pair(
-        &mut self,
+    pub fn match_pair_ix(
+        &self,
         instrument: &Pubkey,
         book: &Pubkey,
         mint: &Pubkey,
@@ -553,7 +627,7 @@ impl Harness {
         short_id: u64,
         taker: &Pubkey,
         maker: &Pubkey,
-    ) -> (TxResult, Pubkey) {
+    ) -> (Instruction, Pubkey) {
         let pmlc_id = self.book_next_intent_id(book);
         let (pmlc, _) = Pmlc::find_pda(&self.program_id, instrument, pmlc_id);
         let ix = self.ix(
@@ -577,8 +651,37 @@ impl Harness {
                 AccountMeta::new(self.fee_treasury_pda(mint), false),
             ],
         );
-        let res = self.send(&[ix], &[]);
-        (res, pmlc)
+        (ix, pmlc)
+    }
+
+    /// `MatchPair` — match an explicit `(long_id, short_id)` pair into a new
+    /// PMLC. `taker`/`maker` are the volume-account owners (taker = the side
+    /// posted later). Returns `(tx result, PMLC PDA)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn match_pair(
+        &mut self,
+        instrument: &Pubkey,
+        book: &Pubkey,
+        mint: &Pubkey,
+        long_owner: &Pubkey,
+        short_owner: &Pubkey,
+        long_id: u64,
+        short_id: u64,
+        taker: &Pubkey,
+        maker: &Pubkey,
+    ) -> (TxResult, Pubkey) {
+        let (ix, pmlc) = self.match_pair_ix(
+            instrument,
+            book,
+            mint,
+            long_owner,
+            short_owner,
+            long_id,
+            short_id,
+            taker,
+            maker,
+        );
+        (self.send(&[ix], &[]), pmlc)
     }
 
     /// Load + copy a PMLC account's state.

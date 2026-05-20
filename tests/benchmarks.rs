@@ -1,19 +1,18 @@
 //! Compute-unit benchmarks.
 //!
-//! Runs each meaningful instruction with representative inputs and
-//! records the compute units consumed (litesvm reports per-transaction
-//! CU). Prints a table — run with `cargo test --test benchmarks --
-//! --nocapture` — and asserts every instruction stays well under the
-//! 200k per-instruction limit, so a CU regression fails the suite.
-//!
-//! The committed numbers live in `BENCHMARKS.md`.
+//! `compute_unit_benchmarks` runs each instruction with representative
+//! inputs and records the compute units consumed. `compute_unit_scaling`
+//! measures how PostIntent and MatchPair grow with the book's node
+//! capacity, since the matching and prune paths scan the node pool.
+//! Run with `cargo test --test benchmarks -- --nocapture`. The
+//! committed numbers live in `BENCHMARKS.md`.
 
 use polyleverage::state::{SIDE_LONG, SIDE_SHORT};
 use polyleverage_sim::driver::TxResult;
 use polyleverage_sim::scenario::{RANGE_MAX_FP, RANGE_MIN_FP, SCENARIO_EXPIRY_SLOT};
-use polyleverage_sim::Scenario;
+use polyleverage_sim::{Attestor, Harness, InstrumentParams, Scenario};
 use solana_sdk::pubkey::Pubkey;
-use solana_sdk::signature::Signer;
+use solana_sdk::signature::{Keypair, Signer};
 
 /// Per-instruction CU ceiling — the Solana default single-instruction
 /// limit. Any instruction approaching this needs attention.
@@ -148,4 +147,137 @@ fn compute_unit_benchmarks() {
         );
     }
     println!("  {}", "-".repeat(46));
+}
+
+// --- Scaling: compute units vs book capacity --------------------------------
+
+/// Create a SOL-funded trader with a margin account and a deposit.
+fn fund_trader(h: &mut Harness, mint: &Pubkey) -> Keypair {
+    let t = h.create_user();
+    let ata = Pubkey::new_unique();
+    h.create_token_account(&ata, mint, &t.pubkey(), 1_000_000);
+    h.create_margin_account(&t, mint);
+    h.deposit(&t, mint, &ata, 1_000_000).expect("trader deposit");
+    t
+}
+
+/// Measure PostIntent and MatchPair compute units against a book of a
+/// given node capacity. The matching, cancel, and prune paths scan the
+/// whole node pool, so cost tracks the book's provisioned capacity, not
+/// its live fill — the book here holds only a few intents. Returns
+/// `None` for a leg whose transaction exceeded the 1.4M limit.
+fn measure_scaling(capacity: u32) -> (Option<u64>, Option<u64>) {
+    let mut h = Harness::new();
+    h.init_program_config(Attestor::new().signer_bytes(), 300);
+    h.init_fee_schedule();
+    let mint = h.create_mint(6);
+    h.init_vault_ata(&mint);
+
+    // The book account can only be created small: Solana caps account
+    // growth at ~10 KiB per transaction, so a deep book is created at a
+    // minimal capacity and grown with repeated ExpandIntentBook calls.
+    let params = InstrumentParams {
+        collateral_bucket: 1_000,
+        initial_book_capacity: 16,
+        ..InstrumentParams::default()
+    };
+    let (instrument, book) = h.create_instrument(&mint, &params);
+    while h.book_capacity(&book) < capacity {
+        let remaining = capacity - h.book_capacity(&book);
+        h.expand_intent_book(&instrument, &book, remaining.min(100))
+            .expect("expand book");
+    }
+
+    let a = fund_trader(&mut h, &mint);
+    let b = fund_trader(&mut h, &mint);
+
+    // A's first post creates A's seat. prune-on-post is skipped on a
+    // trader's first post, so this one is not the measurement.
+    let long_id = h.book_next_intent_id(&book);
+    h.post_intent(
+        &a, &instrument, &book, &mint, SIDE_LONG, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        SCENARIO_EXPIRY_SLOT,
+    )
+    .expect("seed long");
+
+    // A's second post is measured: A now has a seat, so prune-on-post
+    // runs its O(capacity) scan over the node pool.
+    let post_ix = h.post_intent_ix(
+        &a, &instrument, &book, &mint, SIDE_LONG, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        SCENARIO_EXPIRY_SLOT,
+    );
+    let post_cu = h
+        .send_metered(&[post_ix], &[&a], 1_400_000)
+        .ok()
+        .map(|m| m.compute_units_consumed);
+
+    // A short to match against.
+    let short_id = h.book_next_intent_id(&book);
+    h.post_intent(
+        &b, &instrument, &book, &mint, SIDE_SHORT, RANGE_MIN_FP, RANGE_MAX_FP, 1,
+        SCENARIO_EXPIRY_SLOT,
+    )
+    .expect("seed short");
+
+    // MatchPair is measured: find_intent_by_id scans the pool twice.
+    let (match_ix, _) = h.match_pair_ix(
+        &instrument, &book, &mint, &a.pubkey(), &b.pubkey(), long_id, short_id,
+        &b.pubkey(), &a.pubkey(),
+    );
+    let match_cu = h
+        .send_metered(&[match_ix], &[], 1_400_000)
+        .ok()
+        .map(|m| m.compute_units_consumed);
+
+    (post_cu, match_cu)
+}
+
+#[test]
+fn compute_unit_scaling() {
+    let caps = [16u32, 64, 256, 1024, 4096, 8192];
+    let rows: Vec<(u32, Option<u64>, Option<u64>)> =
+        caps.iter().map(|&c| {
+            let (p, m) = measure_scaling(c);
+            (c, p, m)
+        }).collect();
+
+    let fmt = |v: Option<u64>| {
+        v.map(|x| x.to_string()).unwrap_or_else(|| "over 1.4M".into())
+    };
+    println!("\n  polyleverage compute units vs book capacity (litesvm)");
+    println!("  {}", "-".repeat(54));
+    println!("  {:>10}  {:>16}  {:>16}", "capacity", "PostIntent CU", "MatchPair CU");
+    println!("  {}", "-".repeat(54));
+    for (c, p, m) in &rows {
+        println!("  {c:>10}  {:>16}  {:>16}", fmt(*p), fmt(*m));
+    }
+    println!("  {}", "-".repeat(54));
+
+    // Linear fit on the measured MatchPair points; extrapolate the
+    // capacity at which it crosses the 200k default and 1.4M maximum.
+    let pts: Vec<(f64, f64)> = rows
+        .iter()
+        .filter_map(|(c, _, m)| m.map(|v| (*c as f64, v as f64)))
+        .collect();
+    if pts.len() >= 2 {
+        let (c0, m0) = pts[0];
+        let (c1, m1) = *pts.last().unwrap();
+        let slope = (m1 - m0) / (c1 - c0);
+        let base = m0 - slope * c0;
+        println!("  MatchPair fit: ~{:.0} CU + ~{:.1} CU per node", base, slope);
+        println!(
+            "  crosses 200k default limit at capacity ~{:.0}",
+            (200_000.0 - base) / slope
+        );
+        println!(
+            "  crosses 1.4M maximum limit at capacity ~{:.0}",
+            (1_400_000.0 - base) / slope
+        );
+    }
+    println!("  {}", "-".repeat(54));
+
+    assert!(
+        rows[0].2.map_or(false, |m| m < CU_CEILING),
+        "MatchPair at capacity 16 should be under the 200k default"
+    );
 }
