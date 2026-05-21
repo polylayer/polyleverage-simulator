@@ -27,8 +27,8 @@ use crate::attestor::Attestor;
 use polyleverage::instruction::{
     CancelTimelockArgs, CreateInstrumentArgs, DepositArgs, ExecuteTimelockArgs,
     ExpandIntentBookArgs, FeeTier, InitFeeScheduleArgs, InitProgramConfigArgs, InstructionTag,
-    LiquidateArgs, MatchPairArgs, NovateArgs, PostIntentArgs, ProposeSetAttestationSignerArgs,
-    ResolveArgs, WithdrawArgs,
+    LiquidateArgs, MatchBestArgs, MatchPairArgs, NovateArgs, PostIntentArgs,
+    ProposeSetAttestationSignerArgs, ResolveArgs, WithdrawArgs,
 };
 use polyleverage::seeds::{
     SEED_BOOK, SEED_CONFIG, SEED_FEE_SCHEDULE, SEED_INSTRUMENT, SEED_MARGIN, SEED_MARKET_NONCE,
@@ -775,6 +775,51 @@ impl Harness {
         let mut clock: Clock = self.svm.get_sysvar();
         clock.unix_timestamp += secs;
         self.svm.set_sysvar(&clock);
+    }
+
+    /// Advance the cluster clock's slot by `slots` — used to expire
+    /// intents on demand. Same mechanism as `warp_unix`.
+    pub fn warp_slot(&mut self, slots: u64) {
+        let mut clock: Clock = self.svm.get_sysvar();
+        clock.slot += slots;
+        self.svm.set_sysvar(&clock);
+    }
+
+    /// `MatchBestAvailable` — the program scans the book for the best
+    /// crossing pair and matches it. Accounts are identical to `MatchPair`,
+    /// so the caller still names the pair it expects (to derive the margin
+    /// and volume PDAs). Returns `(tx result, PMLC PDA)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn match_best(
+        &mut self,
+        instrument: &Pubkey,
+        book: &Pubkey,
+        mint: &Pubkey,
+        long_owner: &Pubkey,
+        short_owner: &Pubkey,
+        taker: &Pubkey,
+        maker: &Pubkey,
+    ) -> (TxResult, Pubkey) {
+        let pmlc_id = self.book_next_intent_id(book);
+        let (pmlc, _) = Pmlc::find_pda(&self.program_id, instrument, pmlc_id);
+        let ix = self.ix(
+            InstructionTag::MatchBestAvailable,
+            &MatchBestArgs { max_pairs: 1 },
+            vec![
+                AccountMeta::new(self.payer.pubkey(), true),
+                AccountMeta::new_readonly(*instrument, false),
+                AccountMeta::new(*book, false),
+                AccountMeta::new(self.margin_pda(long_owner, mint), false),
+                AccountMeta::new(self.margin_pda(short_owner, mint), false),
+                AccountMeta::new(pmlc, false),
+                AccountMeta::new_readonly(system_program::ID, false),
+                AccountMeta::new_readonly(self.pda(&[SEED_FEE_SCHEDULE]).0, false),
+                AccountMeta::new(self.user_volume_pda(taker, mint), false),
+                AccountMeta::new(self.user_volume_pda(maker, mint), false),
+                AccountMeta::new(self.fee_treasury_pda(mint), false),
+            ],
+        );
+        (self.send(&[ix], &[]), pmlc)
     }
 }
 
