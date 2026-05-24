@@ -381,6 +381,9 @@ pub struct InstrumentParams {
     pub liquidation_bounty_bps: u16,
     pub max_staleness_secs: u64,
     pub initial_book_capacity: u32,
+    /// Off-chain attestor reference (whole USD). Non-zero for
+    /// `source = PYTH (3)`; must be 0 for `source = POLYMARKET (0)`.
+    pub reference_usd: u64,
 }
 
 impl Default for InstrumentParams {
@@ -396,6 +399,7 @@ impl Default for InstrumentParams {
             liquidation_bounty_bps: 100,
             max_staleness_secs: 300,
             initial_book_capacity: 64,
+            reference_usd: 0,
         }
     }
 }
@@ -464,6 +468,7 @@ impl Harness {
             liquidation_bounty_bps: p.liquidation_bounty_bps,
             max_staleness_secs: p.max_staleness_secs,
             initial_book_capacity: p.initial_book_capacity,
+            reference_usd: p.reference_usd,
         };
         let ix = self.ix(
             InstructionTag::CreateInstrument,

@@ -18,6 +18,7 @@ fn thousand_x_leverage_full_lifecycle_holds_bounded_win() {
         source: 3, // source::PYTH
         leverage_bps: 10_000_000,         // 1000x
         collateral_bucket: 1_000_000_000, // $1000 at 6 decimals
+        reference_usd: 1_000_000,         // $1M reference ceiling (BTC)
         ..InstrumentParams::default()
     };
     let mut s = Scenario::with_params(params);
@@ -90,6 +91,7 @@ fn small_bucket_low_notional_instrument_matches() {
         source: 3, // source::PYTH
         leverage_bps: 1_000_000,        // 100x
         collateral_bucket: 100_000_000, // $100 at 6 decimals
+        reference_usd: 1_000_000,       // $1M reference ceiling (BTC)
         ..InstrumentParams::default()
     };
     let mut s = Scenario::with_params(params);
@@ -116,6 +118,7 @@ fn normalized_pyth_price_settles_full_lifecycle() {
         source: 3, // source::PYTH
         leverage_bps: 200_000,
         collateral_bucket: 1_000_000_000,
+        reference_usd: 1_000_000,       // $1M reference ceiling (BTC)
         ..InstrumentParams::default()
     };
     let mut s = Scenario::with_params(params);
